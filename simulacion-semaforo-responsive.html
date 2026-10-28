@@ -1,0 +1,1313 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Simulación de Intersección Semaforizada 3D (Responsive)</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    
+    /* Responsive Canvas */
+    #canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      aspect-ratio: 640 / 520;
+      touch-action: none; /* Prevents mobile scroll while orbiting in 3D */
+      cursor: grab;
+      user-select: none;
+    }
+    #canvas:active { cursor: grabbing; }
+
+    /* Mobile-Optimized Range Sliders */
+    input[type="range"] {
+      -webkit-appearance: none; appearance: none;
+      height: 8px; border-radius: 4px; background: var(--border); outline: none;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 20px; height: 20px; border-radius: 50%;
+      background: var(--primary); cursor: pointer;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 20px; height: 20px; border-radius: 50%;
+      background: var(--primary); cursor: pointer; border: none;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    }
+
+    /* LOS Badges */
+    .los-badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: 36px; height: 36px; border-radius: 8px;
+      font-weight: 800; font-size: 18px; color: #fff;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.35);
+    }
+    .los-A { background: #22c55e; }
+    .los-B { background: #84cc16; }
+    .los-C { background: #eab308; }
+    .los-D { background: #f97316; }
+    .los-E { background: #ef4444; }
+    .los-F { background: #991b1b; animation: pf 0.8s ease-in-out infinite; }
+    @keyframes pf {
+      0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(153,27,27,0.5); }
+      50% { transform: scale(1.1); box-shadow: 0 0 12px 3px rgba(220,38,38,0.6); }
+    }
+
+    /* Buttons */
+    .cam-btn {
+      padding: 6px 10px; border-radius: 8px; font-size: 12px; font-weight: 600;
+      background: var(--background); border: 1px solid var(--border);
+      color: var(--foreground); transition: all 0.15s ease;
+      touch-action: manipulation;
+    }
+    .cam-btn:active, .cam-btn:hover {
+      background: var(--accent); color: var(--accent-foreground);
+    }
+
+    .tab-btn {
+      flex: 1; padding: 9px 12px; font-size: 13px; font-weight: 700;
+      text-align: center; border-bottom: 2px solid transparent;
+      color: var(--muted-foreground); transition: all 0.15s ease;
+    }
+    .tab-btn.active {
+      color: var(--primary); border-bottom-color: var(--primary);
+    }
+  </style>
+</head>
+<body class="bg-[var(--background)] text-[var(--foreground)] antialiased p-0 m-0" style="overflow-x:hidden">
+
+<div class="flex flex-col min-h-screen max-w-7xl mx-auto">
+
+  <!-- Header -->
+  <header class="px-4 sm:px-6 pt-3.5 pb-2">
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+      <div>
+        <h1 class="text-lg sm:text-xl font-black flex items-center gap-2">
+          <span>🚦</span> Intersección Semaforizada 3D
+        </h1>
+        <p class="text-xs text-[var(--muted-foreground)]">
+          Simulación interactiva responsive · Calles de 1 sentido · HCM 2010
+        </p>
+      </div>
+
+      <!-- Camera Presets -->
+      <div class="flex items-center gap-1.5 flex-wrap overflow-x-auto pb-1 sm:pb-0">
+        <span class="text-xs text-[var(--muted-foreground)] hidden sm:inline mr-1">🎥 Vista:</span>
+        <button class="cam-btn" onclick="setCamera('iso')">🔄 Isométrica</button>
+        <button class="cam-btn" onclick="setCamera('top')">⬆ Cenital</button>
+        <button class="cam-btn" onclick="setCamera('streetNS')">🚗 N-S</button>
+        <button class="cam-btn" onclick="setCamera('streetEW')">🚗 E-O</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Telemetry Bar (Live State, Semáforo, Ciclo, NDS General) -->
+  <div class="px-4 sm:px-6 pb-2.5">
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+      
+      <!-- Card 1: Semáforo Activo -->
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3 shadow-sm flex items-center justify-between">
+        <div class="flex items-center gap-2.5">
+          <div id="hudPhaseBulb" class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg text-white shadow-md bg-green-500 flex-shrink-0">
+            🟢
+          </div>
+          <div>
+            <div class="text-[10px] uppercase tracking-wider text-[var(--muted-foreground)] font-semibold">Semáforo Activo</div>
+            <div id="hudPhaseName" class="text-sm font-bold text-[var(--foreground)] leading-tight">Verde N-S</div>
+          </div>
+        </div>
+        <div class="text-right">
+          <div id="hudPhaseTimer" class="text-2xl font-black font-mono text-[var(--foreground)] leading-none">40s</div>
+          <div class="text-[10px] text-[var(--muted-foreground)] mt-0.5">restantes</div>
+        </div>
+      </div>
+
+      <!-- Card 2: Ciclo Semafórico -->
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3 shadow-sm flex flex-col justify-between">
+        <div class="flex items-center justify-between">
+          <span class="text-[10px] uppercase tracking-wider text-[var(--muted-foreground)] font-semibold">Ciclo Semafórico</span>
+          <span id="hudCycleTimeBadge" class="text-xs font-bold font-mono px-2 py-0.5 rounded bg-[var(--background)]">C = 90s</span>
+        </div>
+        <div class="flex items-center justify-between mt-1 text-xs font-mono">
+          <span id="hudCycleElapsedText" class="text-[var(--muted-foreground)]">t = 0s / 90s</span>
+          <span id="hudCyclePercentText" class="font-semibold">0%</span>
+        </div>
+        <div class="w-full bg-[var(--background)] rounded-full h-2 mt-1.5 overflow-hidden">
+          <div id="hudCycleProgressBar" class="bg-blue-500 h-2 rounded-full transition-all duration-100" style="width: 0%"></div>
+        </div>
+      </div>
+
+      <!-- Card 3: Nivel de Servicio General -->
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3 shadow-sm flex items-center justify-between">
+        <div>
+          <div class="text-[10px] uppercase tracking-wider text-[var(--muted-foreground)] font-semibold">NDS Intersección General</div>
+          <div id="hudOverallDelayText" class="text-sm font-bold mt-0.5 font-mono">d̄ = 18.2 s/veh</div>
+          <div id="hudOverallVCText" class="text-[11px] text-[var(--muted-foreground)]">v/c promedio: 0.54</div>
+        </div>
+        <div id="hudOverallLOSBadge" class="los-badge los-B flex-shrink-0" style="min-width:44px;height:44px;font-size:22px;">B</div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Mobile View Tabs Switcher (Visible on small screens < lg) -->
+  <div class="lg:hidden flex border-b border-[var(--border)] px-4 mb-3">
+    <button id="btnTabSim" class="tab-btn active" onclick="switchMobileTab('sim')">
+      🎮 Vista 3D y Resultados
+    </button>
+    <button id="btnTabControls" class="tab-btn" onclick="switchMobileTab('controls')">
+      ⚙️ Parámetros y Ajustes
+    </button>
+  </div>
+
+  <!-- Main Grid Layout -->
+  <main class="flex-1 flex flex-col lg:flex-row gap-4 px-4 sm:px-6 pb-6">
+    
+    <!-- LEFT SECTION: 3D Canvas + 4 Approach Cards -->
+    <section id="secSim" class="w-full lg:w-[58%] flex flex-col gap-3">
+      <!-- 3D Canvas Container -->
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-2 sm:p-2.5 shadow-sm">
+        <canvas id="canvas" width="640" height="520"></canvas>
+        <div class="flex items-center justify-between mt-2 px-1 text-xs text-[var(--muted-foreground)] font-mono">
+          <span id="simClock">t = 0s</span>
+          <span class="text-[11px] font-sans">
+            <span class="hidden sm:inline">💡 Arrastra para orbitar 360° · Rueda para zoom</span>
+            <span class="sm:hidden">💡 1 dedo: rotar · 2 dedos: zoom</span>
+          </span>
+          <span id="vehCount">0 veh</span>
+        </div>
+      </div>
+
+      <!-- 4 Approach Status Cards (Clean Telemetry, Non-Overlapping) -->
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-2" id="approachHUDCards">
+        <!-- Generated dynamically by JavaScript -->
+      </div>
+    </section>
+
+    <!-- RIGHT SECTION: Interactive Controls & Configuration -->
+    <section id="secControls" class="w-full lg:w-[42%] flex flex-col gap-3">
+
+      <!-- Tiempos de Semáforo -->
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3.5 shadow-sm">
+        <div class="flex items-center justify-between mb-2.5">
+          <h2 class="font-bold text-sm flex items-center gap-1.5">
+            <span>⏱</span> Tiempos del Semáforo
+          </h2>
+          <span class="text-[11px] text-[var(--muted-foreground)]">Ciclo Automático</span>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
+          <div>
+            <div class="flex items-center justify-between text-xs font-semibold">
+              <span>Verde N-S</span>
+              <span id="greenNSVal" class="font-mono text-blue-500">40s</span>
+            </div>
+            <input type="range" id="greenNS" min="8" max="120" value="40" class="w-full mt-1.5">
+          </div>
+
+          <div>
+            <div class="flex items-center justify-between text-xs font-semibold">
+              <span>Verde E-O</span>
+              <span id="greenEWVal" class="font-mono text-blue-500">40s</span>
+            </div>
+            <input type="range" id="greenEW" min="8" max="120" value="40" class="w-full mt-1.5">
+          </div>
+
+          <div>
+            <div class="flex items-center justify-between text-xs font-semibold">
+              <span>Ámbar</span>
+              <span id="amberTimeVal" class="font-mono text-yellow-500">3s</span>
+            </div>
+            <input type="range" id="amberTime" min="3" max="6" value="3" class="w-full mt-1.5">
+          </div>
+
+          <div>
+            <div class="flex items-center justify-between text-xs font-semibold">
+              <span>Todo Rojo (Despeje)</span>
+              <span id="allRedTimeVal" class="font-mono text-red-500">2s</span>
+            </div>
+            <input type="range" id="allRedTime" min="1" max="4" value="2" class="w-full mt-1.5">
+          </div>
+
+          <div class="sm:col-span-2 flex items-center justify-between pt-1 border-t border-[var(--border)]">
+            <div>
+              <div class="text-xs font-bold">Ciclo Total Calculado</div>
+              <div class="text-[10px] text-[var(--muted-foreground)]">= V<sub>NS</sub> + V<sub>EO</sub> + 2(Ámbar) + 2(Todo Rojo)</div>
+            </div>
+            <div class="flex items-center gap-1 bg-[var(--background)] px-3 py-1 rounded-lg border border-[var(--border)]">
+              <span class="text-xs text-[var(--muted-foreground)]">C =</span>
+              <span id="cycleTimeVal" class="text-sm font-mono font-black text-blue-500">90</span>
+              <span class="text-xs text-[var(--muted-foreground)]">seg</span>
+            </div>
+          </div>
+
+          <div class="sm:col-span-2">
+            <div class="flex items-center justify-between text-xs font-semibold">
+              <span>Velocidad de Simulación</span>
+              <span id="simSpeedVal" class="font-mono text-green-500">5x</span>
+            </div>
+            <input type="range" id="simSpeed" min="1" max="15" value="5" class="w-full mt-1.5">
+          </div>
+        </div>
+      </div>
+
+      <!-- Volúmenes Vehiculares -->
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3.5 shadow-sm">
+        <h2 class="font-bold text-sm mb-2.5 flex items-center gap-1.5">
+          <span>🚗</span> Volúmenes Vehiculares (veh/h)
+        </h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
+          <div>
+            <div class="flex items-center justify-between text-xs font-semibold">
+              <span>Norte → Sur</span>
+              <span id="volNSVal" class="font-mono">600</span>
+            </div>
+            <input type="range" id="volNS" min="50" max="2200" value="600" step="50" class="w-full mt-1.5">
+          </div>
+          <div>
+            <div class="flex items-center justify-between text-xs font-semibold">
+              <span>Sur → Norte</span>
+              <span id="volSNVal" class="font-mono">500</span>
+            </div>
+            <input type="range" id="volSN" min="50" max="2200" value="500" step="50" class="w-full mt-1.5">
+          </div>
+          <div>
+            <div class="flex items-center justify-between text-xs font-semibold">
+              <span>Este → Oeste</span>
+              <span id="volEWVal" class="font-mono">400</span>
+            </div>
+            <input type="range" id="volEW" min="50" max="2200" value="400" step="50" class="w-full mt-1.5">
+          </div>
+          <div>
+            <div class="flex items-center justify-between text-xs font-semibold">
+              <span>Oeste → Este</span>
+              <span id="volWEVal" class="font-mono">450</span>
+            </div>
+            <input type="range" id="volWE" min="50" max="2200" value="450" step="50" class="w-full mt-1.5">
+          </div>
+        </div>
+      </div>
+
+      <!-- Capacidad y Carriles 3D -->
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3.5 shadow-sm">
+        <h2 class="font-bold text-sm mb-2.5 flex items-center gap-1.5">
+          <span>📊</span> Capacidad y Carriles 3D
+        </h2>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
+          <div>
+            <div class="flex items-center justify-between text-xs font-semibold">
+              <span>Flujo de Saturación</span>
+              <span id="satFlowVal" class="font-mono">1800</span>
+            </div>
+            <input type="range" id="satFlow" min="1200" max="2000" value="1800" step="50" class="w-full mt-1.5">
+            <div class="text-[10px] text-[var(--muted-foreground)] mt-1">veh/h/carril</div>
+          </div>
+          <div>
+            <div class="flex items-center justify-between text-xs font-semibold text-blue-500">
+              <span>Carriles por Acceso</span>
+              <span id="numLanesVal" class="font-mono font-bold text-base">1</span>
+            </div>
+            <input type="range" id="numLanes" min="1" max="3" value="1" class="w-full mt-1.5">
+            <div class="text-[10px] text-blue-500 mt-1">Ensancha la calzada 3D</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Referencia Metodológica HCM 2010 -->
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-3.5 shadow-sm">
+        <h2 class="font-bold text-sm mb-2 flex items-center gap-1.5">
+          <span>📚</span> Escala Nivel de Servicio (HCM 2010)
+        </h2>
+        <div class="grid grid-cols-3 sm:grid-cols-6 gap-1.5 text-xs text-center">
+          <div class="p-1.5 rounded bg-[var(--background)] border border-[var(--border)]">
+            <div class="font-bold text-green-500 text-sm">A</div>
+            <div class="text-[10px] text-[var(--muted-foreground)]">≤ 10 s</div>
+          </div>
+          <div class="p-1.5 rounded bg-[var(--background)] border border-[var(--border)]">
+            <div class="font-bold text-lime-500 text-sm">B</div>
+            <div class="text-[10px] text-[var(--muted-foreground)]">≤ 20 s</div>
+          </div>
+          <div class="p-1.5 rounded bg-[var(--background)] border border-[var(--border)]">
+            <div class="font-bold text-yellow-500 text-sm">C</div>
+            <div class="text-[10px] text-[var(--muted-foreground)]">≤ 35 s</div>
+          </div>
+          <div class="p-1.5 rounded bg-[var(--background)] border border-[var(--border)]">
+            <div class="font-bold text-orange-500 text-sm">D</div>
+            <div class="text-[10px] text-[var(--muted-foreground)]">≤ 55 s</div>
+          </div>
+          <div class="p-1.5 rounded bg-[var(--background)] border border-[var(--border)]">
+            <div class="font-bold text-red-500 text-sm">E</div>
+            <div class="text-[10px] text-[var(--muted-foreground)]">≤ 80 s</div>
+          </div>
+          <div class="p-1.5 rounded bg-[var(--background)] border border-[var(--border)]">
+            <div class="font-bold text-red-700 text-sm">F</div>
+            <div class="text-[10px] text-[var(--muted-foreground)]">&gt; 80 s</div>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+</div>
+
+<script>
+/* ===========================================================
+   RESPONSIVE TABS (MOBILE VIEW SWITCHER)
+   =========================================================== */
+function switchMobileTab(tab) {
+  const secSim = document.getElementById('secSim');
+  const secControls = document.getElementById('secControls');
+  const btnTabSim = document.getElementById('btnTabSim');
+  const btnTabControls = document.getElementById('btnTabControls');
+
+  if (tab === 'sim') {
+    secSim.classList.remove('hidden');
+    secControls.classList.add('hidden');
+    btnTabSim.classList.add('active');
+    btnTabControls.classList.remove('active');
+  } else {
+    secSim.classList.add('hidden');
+    secControls.classList.remove('hidden');
+    btnTabSim.classList.remove('active');
+    btnTabControls.classList.add('active');
+  }
+}
+
+// Window resize listener to ensure desktop shows both columns
+window.addEventListener('resize', () => {
+  if (window.innerWidth >= 1024) {
+    document.getElementById('secSim').classList.remove('hidden');
+    document.getElementById('secControls').classList.remove('hidden');
+  }
+});
+
+/* ===========================================================
+   CANVAS & 3D CAMERA ENGINE
+   =========================================================== */
+const cvs = document.getElementById('canvas');
+const ctx = cvs.getContext('2d');
+const W = cvs.width, H = cvs.height;
+const CX = W / 2, CY = H / 2;
+
+const LANE_W = 24;                  // Width of each lane in 3D world units
+function getRH() { return g('numLanes') * LANE_W; }
+function getRW() { return getRH() * 2; }
+const SL_OFF = 10;                  // Stop-line offset
+const MIN_GAP = 5;                  // Min gap (units)
+
+// Colors
+const COL = {
+  grass: '#1e3d23',
+  sidewalk: '#64748b',
+  road: '#212529',
+  roadMark: '#fbbf24',
+  laneDash: '#e2e8f0',
+  stopBar: '#ffffff',
+  sigG: '#22c55e',
+  sigA: '#eab308',
+  sigR: '#ef4444'
+};
+
+const CAR_PAL = {
+  NS: ['#3b82f6','#60a5fa','#2563eb','#1d4ed8','#0284c7'],
+  SN: ['#8b5cf6','#a78bfa','#7c3aed','#6d28d9','#9333ea'],
+  EW: ['#ef4444','#f87171','#dc2626','#b91c1c','#e11d48'],
+  WE: ['#f59e0b','#fbbf24','#d97706','#b45309','#ca8a04']
+};
+
+/* Camera Orbit State */
+let camTheta = Math.PI / 4;   // 45 deg azimuth
+let camPhi   = 0.62;          // Pitch elevation
+let camZoom  = 1.05;          // Scale factor
+const CAM_DIST = 600;
+
+function setCamera(mode) {
+  if (mode === 'iso') {
+    camTheta = Math.PI / 4;
+    camPhi = 0.62;
+    camZoom = 1.05;
+  } else if (mode === 'top') {
+    camTheta = 0;
+    camPhi = 1.50;
+    camZoom = 1.08;
+  } else if (mode === 'streetNS') {
+    camTheta = 0;
+    camPhi = 0.28;
+    camZoom = 1.30;
+  } else if (mode === 'streetEW') {
+    camTheta = Math.PI / 2;
+    camPhi = 0.28;
+    camZoom = 1.30;
+  }
+}
+
+/* TOUCH & MOUSE ORBIT CONTROLS */
+let isDragging = false;
+let lastMouseX = 0, lastMouseY = 0;
+let initialPinchDist = null;
+let initialZoom = camZoom;
+
+// Mouse controls (Desktop)
+cvs.addEventListener('mousedown', (e) => {
+  isDragging = true;
+  lastMouseX = e.clientX;
+  lastMouseY = e.clientY;
+});
+window.addEventListener('mouseup', () => { isDragging = false; });
+cvs.addEventListener('mousemove', (e) => {
+  if (!isDragging) return;
+  const dx = e.clientX - lastMouseX;
+  const dy = e.clientY - lastMouseY;
+  lastMouseX = e.clientX;
+  lastMouseY = e.clientY;
+  camTheta += dx * 0.008;
+  camPhi = Math.max(0.15, Math.min(1.52, camPhi + dy * 0.008));
+});
+cvs.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  camZoom = Math.max(0.6, Math.min(2.4, camZoom - e.deltaY * 0.001));
+}, { passive: false });
+
+// Touch controls (Mobile & Tablets)
+cvs.addEventListener('touchstart', (e) => {
+  if (e.touches.length === 1) {
+    isDragging = true;
+    lastMouseX = e.touches[0].clientX;
+    lastMouseY = e.touches[0].clientY;
+  } else if (e.touches.length === 2) {
+    isDragging = false;
+    initialPinchDist = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+    initialZoom = camZoom;
+  }
+}, { passive: false });
+
+cvs.addEventListener('touchmove', (e) => {
+  e.preventDefault(); // Stop page scrolling while rotating in 3D
+  if (e.touches.length === 1 && isDragging) {
+    const dx = e.touches[0].clientX - lastMouseX;
+    const dy = e.touches[0].clientY - lastMouseY;
+    lastMouseX = e.touches[0].clientX;
+    lastMouseY = e.touches[0].clientY;
+    camTheta += dx * 0.009;
+    camPhi = Math.max(0.15, Math.min(1.52, camPhi + dy * 0.009));
+  } else if (e.touches.length === 2 && initialPinchDist !== null) {
+    const currentDist = Math.hypot(
+      e.touches[0].clientX - e.touches[1].clientX,
+      e.touches[0].clientY - e.touches[1].clientY
+    );
+    const factor = currentDist / initialPinchDist;
+    camZoom = Math.max(0.6, Math.min(2.4, initialZoom * factor));
+  }
+}, { passive: false });
+
+cvs.addEventListener('touchend', (e) => {
+  if (e.touches.length === 0) {
+    isDragging = false;
+    initialPinchDist = null;
+  } else if (e.touches.length === 1) {
+    isDragging = true;
+    lastMouseX = e.touches[0].clientX;
+    lastMouseY = e.touches[0].clientY;
+    initialPinchDist = null;
+  }
+});
+
+// 3D Projection Mathematics
+function project(x, y, z) {
+  const cosT = Math.cos(camTheta), sinT = Math.sin(camTheta);
+  const x1 = x * cosT - y * sinT;
+  const y1 = x * sinT + y * cosT;
+  const z1 = z;
+
+  const cosP = Math.cos(camPhi), sinP = Math.sin(camPhi);
+  const x2 = x1;
+  const y2 = y1 * cosP - z1 * sinP;
+  const z2 = y1 * sinP + z1 * cosP;
+
+  const depth = CAM_DIST + y2;
+  const safeD = Math.max(depth, 30);
+  const scale = (CAM_DIST * camZoom) / safeD;
+
+  return {
+    u: CX + x2 * scale,
+    v: CY - z2 * scale,
+    depth: y2,
+    scale: scale
+  };
+}
+
+// Color Shading Helper
+function shade(color, factor) {
+  let r = 120, g = 120, b = 120;
+  if (color.startsWith('#')) {
+    const hex = color.slice(1);
+    r = parseInt(hex.slice(0, 2), 16);
+    g = parseInt(hex.slice(2, 4), 16);
+    b = parseInt(hex.slice(4, 6), 16);
+  }
+  r = Math.min(255, Math.max(0, Math.round(r * factor)));
+  g = Math.min(255, Math.max(0, Math.round(g * factor)));
+  b = Math.min(255, Math.max(0, Math.round(b * factor)));
+  return `rgb(${r},${g},${b})`;
+}
+
+// 3D Polygon Drawing
+function drawPoly3D(pts, fill, stroke = null, lw = 1) {
+  if (pts.length < 3) return;
+  const pr = pts.map(p => project(p.x, p.y, p.z));
+  ctx.beginPath();
+  ctx.moveTo(pr[0].u, pr[0].v);
+  for (let i = 1; i < pr.length; i++) ctx.lineTo(pr[i].u, pr[i].v);
+  ctx.closePath();
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
+}
+
+// 3D Rotated Box
+function drawBox3D(cx, cy, cz, dx, dy, dz, heading, color) {
+  const hx = dx / 2, hy = dy / 2, hz = dz / 2;
+  const cosH = Math.cos(heading), sinH = Math.sin(heading);
+
+  function rot(lx, ly) {
+    return {
+      x: cx + lx * cosH - ly * sinH,
+      y: cy + lx * sinH + ly * cosH
+    };
+  }
+
+  const c0 = rot(-hx, -hy), c1 = rot( hx, -hy);
+  const c2 = rot( hx,  hy), c3 = rot(-hx,  hy);
+  const zb = cz - hz, zt = cz + hz;
+
+  const topFace = [
+    {x:c0.x, y:c0.y, z:zt}, {x:c1.x, y:c1.y, z:zt},
+    {x:c2.x, y:c2.y, z:zt}, {x:c3.x, y:c3.y, z:zt}
+  ];
+
+  const sides = [
+    { pts: [{x:c1.x,y:c1.y,z:zb},{x:c2.x,y:c2.y,z:zb},{x:c2.x,y:c2.y,z:zt},{x:c1.x,y:c1.y,z:zt}], col: shade(color, 1.05) },
+    { pts: [{x:c3.x,y:c3.y,z:zb},{x:c0.x,y:c0.y,z:zb},{x:c0.x,y:c0.y,z:zt},{x:c3.x,y:c3.y,z:zt}], col: shade(color, 0.72) },
+    { pts: [{x:c2.x,y:c2.y,z:zb},{x:c3.x,y:c3.y,z:zb},{x:c3.x,y:c3.y,z:zt},{x:c2.x,y:c2.y,z:zt}], col: shade(color, 0.88) },
+    { pts: [{x:c0.x,y:c0.y,z:zb},{x:c1.x,y:c1.y,z:zb},{x:c1.x,y:c1.y,z:zt},{x:c0.x,y:c0.y,z:zt}], col: shade(color, 0.82) },
+    { pts: topFace, col: shade(color, 1.25) }
+  ];
+
+  sides.forEach(s => {
+    let sumD = 0;
+    s.pts.forEach(p => sumD += project(p.x, p.y, p.z).depth);
+    s.d = sumD / s.pts.length;
+  });
+  sides.sort((a, b) => b.d - a.d);
+
+  sides.forEach(s => drawPoly3D(s.pts, s.col, 'rgba(0,0,0,0.12)', 0.5));
+}
+
+/* ===========================================================
+   CONTROLS & HCM 2010 BINDINGS
+   =========================================================== */
+const S = {};
+['amberTime','allRedTime','greenNS','greenEW','simSpeed',
+ 'volNS','volSN','volEW','volWE','satFlow','numLanes'].forEach(id => {
+  const el = document.getElementById(id);
+  S[id] = el;
+  el.addEventListener('input', () => {
+    const valSpan = document.getElementById(id + 'Val');
+    if (valSpan) {
+      if (id === 'simSpeed') valSpan.textContent = el.value + 'x';
+      else if (id.includes('Time') || id.includes('green')) valSpan.textContent = el.value + 's';
+      else valSpan.textContent = el.value;
+    }
+    updateCycleTimeDisplay();
+    computeLOS();
+  });
+});
+
+function g(id) {
+  if (id === 'cycleTime') {
+    return g('greenNS') + g('greenEW') + 2 * g('amberTime') + 2 * g('allRedTime');
+  }
+  return +S[id].value;
+}
+
+function updateCycleTimeDisplay() {
+  const c = g('cycleTime');
+  const disp = document.getElementById('cycleTimeVal');
+  if (disp) disp.textContent = c;
+  const badge = document.getElementById('hudCycleTimeBadge');
+  if (badge) badge.textContent = `C = ${c}s`;
+}
+
+function calcLOS(vol, green, cycle, sat, lanes) {
+  const s = sat * lanes, gC = green / cycle, cap = s * gC;
+  const X = cap > 0 ? vol / cap : 99;
+  const d1 = (0.5 * cycle * Math.pow(1 - gC, 2)) / Math.max(1 - Math.min(gC * X, 0.99), 0.01);
+  const T = 0.25, k = 0.5, I = 1.0;
+  const d2 = 900 * T * ((X - 1) + Math.sqrt(Math.pow(X - 1, 2) + (8 * k * I * X) / (cap * T)));
+  const d = Math.max(d1 + d2, 0);
+  const los = d <= 10 ? 'A' : d <= 20 ? 'B' : d <= 35 ? 'C' : d <= 55 ? 'D' : d <= 80 ? 'E' : 'F';
+  return { delay: d, los, vc: X, cap: Math.round(cap) };
+}
+
+let losData = {};
+
+function computeLOS() {
+  const c = g('cycleTime'), sf = g('satFlow'), nl = g('numLanes');
+  const gns = g('greenNS'), gew = g('greenEW');
+  losData = {
+    'N→S': calcLOS(g('volNS'), gns, c, sf, nl),
+    'S→N': calcLOS(g('volSN'), gns, c, sf, nl),
+    'E→O': calcLOS(g('volEW'), gew, c, sf, nl),
+    'O→E': calcLOS(g('volWE'), gew, c, sf, nl)
+  };
+
+  const vols = [g('volNS'), g('volSN'), g('volEW'), g('volWE')];
+  const dels = Object.values(losData).map(a => a.delay);
+  const vcs  = Object.values(losData).map(a => a.vc);
+  const tV = vols.reduce((a, b) => a + b, 0);
+  const avgD = tV > 0 ? vols.reduce((s, v, i) => s + v * dels[i], 0) / tV : 0;
+  const avgVC = tV > 0 ? vols.reduce((s, v, i) => s + v * vcs[i], 0) / tV : 0;
+  const oL = avgD <= 10 ? 'A' : avgD <= 20 ? 'B' : avgD <= 35 ? 'C' : avgD <= 55 ? 'D' : avgD <= 80 ? 'E' : 'F';
+
+  // Update Top HUD Overall
+  document.getElementById('hudOverallDelayText').textContent = `d̄ = ${avgD.toFixed(1)} s/veh`;
+  document.getElementById('hudOverallVCText').textContent = `v/c promedio: ${avgVC.toFixed(2)}`;
+  const ob = document.getElementById('hudOverallLOSBadge');
+  ob.textContent = oL;
+  ob.className = 'los-badge los-' + oL;
+}
+
+/* ===========================================================
+   SIGNAL PHASES
+   =========================================================== */
+function sigPhase() {
+  const c = g('cycleTime'), a = g('amberTime'), r = g('allRedTime'), gns = g('greenNS'), gew = g('greenEW');
+  const t = ((simTime % c) + c) % c;
+  if (t < gns) return 'gNS';
+  if (t < gns + a) return 'aNS';
+  if (t < gns + a + r) return 'rALL';
+  if (t < gns + a + r + gew) return 'gEW';
+  if (t < gns + a + r + gew + a) return 'aEW';
+  return 'rALL';
+}
+
+function phaseRemaining() {
+  const c = g('cycleTime'), a = g('amberTime'), r = g('allRedTime'), gns = g('greenNS'), gew = g('greenEW');
+  const t = ((simTime % c) + c) % c;
+  if (t < gns) return { rem: gns - t, total: gns, label: 'Verde N-S', bulb: '🟢' };
+  if (t < gns + a) return { rem: gns + a - t, total: a, label: 'Ámbar N-S', bulb: '🟡' };
+  if (t < gns + a + r) return { rem: gns + a + r - t, total: r, label: 'Todo Rojo (Despeje)', bulb: '🔴' };
+  if (t < gns + a + r + gew) return { rem: gns + a + r + gew - t, total: gew, label: 'Verde E-O', bulb: '🟢' };
+  if (t < gns + a + r + gew + a) return { rem: gns + a + r + gew + a - t, total: a, label: 'Ámbar E-O', bulb: '🟡' };
+  return { rem: c - t, total: r, label: 'Todo Rojo (Despeje)', bulb: '🔴' };
+}
+
+function nsCanGo(ph) { return ph === 'gNS' || ph === 'aNS'; }
+function ewCanGo(ph) { return ph === 'gEW' || ph === 'aEW'; }
+
+/* ===========================================================
+   3D MULTI-LANE VEHICLE SIMULATION
+   =========================================================== */
+function getLaneCenter3D(dir, lane, nl) {
+  const rh = nl * LANE_W;
+  switch (dir) {
+    case 'NS': return -rh + (lane + 0.5) * LANE_W;
+    case 'SN': return  (lane + 0.5) * LANE_W;
+    case 'EW': return  (lane + 0.5) * LANE_W;
+    case 'WE': return -rh + (lane + 0.5) * LANE_W;
+  }
+}
+
+class Vehicle3D {
+  constructor(dir, lane = 0) {
+    this.dir = dir;
+    this.lane = lane;
+    this.baseSpeed = 1.9 + Math.random() * 0.4;
+    this.curSpeed = this.baseSpeed;
+    this.len = 16 + Math.random() * 3;
+    this.w = 9.5;
+    this.h = 6.5;
+    this.stopped = false;
+    this.passed = false;
+    this.dead = false;
+    this.color = CAR_PAL[dir][Math.floor(Math.random() * CAR_PAL[dir].length)];
+
+    const nl = g('numLanes');
+    const center = getLaneCenter3D(dir, lane, nl);
+    const jit = (Math.random() - 0.5) * 2;
+
+    switch (dir) {
+      case 'NS': this.x = center + jit; this.y =  280 + Math.random() * 40; this.heading = -Math.PI / 2; break;
+      case 'SN': this.x = center + jit; this.y = -280 - Math.random() * 40; this.heading =  Math.PI / 2; break;
+      case 'EW': this.y = center + jit; this.x =  280 + Math.random() * 40; this.heading =  Math.PI; break;
+      case 'WE': this.y = center + jit; this.x = -280 - Math.random() * 40; this.heading =  0; break;
+    }
+  }
+
+  stopLinePos() {
+    const rh = getRH();
+    switch (this.dir) {
+      case 'NS': return  rh + SL_OFF;
+      case 'SN': return -rh - SL_OFF;
+      case 'EW': return  rh + SL_OFF;
+      case 'WE': return -rh - SL_OFF;
+    }
+  }
+
+  distToStop() {
+    const sl = this.stopLinePos();
+    switch (this.dir) {
+      case 'NS': return (this.y - this.len / 2) - sl;
+      case 'SN': return sl - (this.y + this.len / 2);
+      case 'EW': return (this.x - this.len / 2) - sl;
+      case 'WE': return sl - (this.x + this.len / 2);
+    }
+  }
+
+  gapTo(leader) {
+    switch (this.dir) {
+      case 'NS': return (this.y - this.len / 2) - (leader.y + leader.len / 2);
+      case 'SN': return (leader.y - leader.len / 2) - (this.y + this.len / 2);
+      case 'EW': return (this.x - this.len / 2) - (leader.x + leader.len / 2);
+      case 'WE': return (leader.x - leader.len / 2) - (this.x + this.len / 2);
+    }
+  }
+
+  update(phase, leader, spd) {
+    const isNS = this.dir === 'NS' || this.dir === 'SN';
+    const hasGreen = isNS ? nsCanGo(phase) : ewCanGo(phase);
+
+    const nl = g('numLanes');
+    if (this.lane >= nl) this.lane = nl - 1;
+    const targetC = getLaneCenter3D(this.dir, this.lane, nl);
+    if (isNS) this.x += (targetC - this.x) * 0.15;
+    else      this.y += (targetC - this.y) * 0.15;
+
+    const dsl = this.distToStop();
+
+    let mustStop = false;
+    if (!this.passed) {
+      if (dsl <= 0) {
+        if (!hasGreen) mustStop = true;
+        else this.passed = true;
+      } else {
+        if (!hasGreen) mustStop = true;
+      }
+    }
+
+    let desired = this.baseSpeed * spd;
+
+    if (mustStop && dsl > 0) {
+      desired = Math.min(desired, Math.max(0, Math.sqrt(dsl) * 0.65));
+    } else if (mustStop && dsl <= 0) {
+      desired = 0;
+    }
+
+    if (leader) {
+      const gap = this.gapTo(leader);
+      if (gap < 45) {
+        const free = gap - MIN_GAP;
+        if (free <= 0) desired = 0;
+        else desired = Math.min(desired, Math.sqrt(free) * 0.65 + leader.curSpeed * 0.35);
+      }
+    }
+
+    if (desired < this.curSpeed) this.curSpeed = desired;
+    else this.curSpeed += (desired - this.curSpeed) * 0.2;
+
+    if (this.curSpeed < 0.02) this.curSpeed = 0;
+    this.stopped = this.curSpeed < 0.08;
+
+    let ds = this.curSpeed;
+
+    if (mustStop && !this.passed && dsl >= 0) ds = Math.min(ds, Math.max(0, dsl));
+    if (leader) {
+      const gap = this.gapTo(leader);
+      if (gap >= 0) ds = Math.min(ds, Math.max(0, gap - MIN_GAP));
+      else if (gap > -this.len) ds = 0;
+    }
+
+    switch (this.dir) {
+      case 'NS': this.y -= ds; break;
+      case 'SN': this.y += ds; break;
+      case 'EW': this.x -= ds; break;
+      case 'WE': this.x += ds; break;
+    }
+
+    if (!this.passed && this.distToStop() <= 0 && hasGreen) this.passed = true;
+
+    const limit = 320;
+    if (this.y > limit || this.y < -limit || this.x > limit || this.x < -limit) {
+      this.dead = true;
+    }
+  }
+
+  draw3D() {
+    drawBox3D(this.x, this.y, this.h / 2, this.len, this.w, this.h, this.heading, this.color);
+
+    const cosH = Math.cos(this.heading), sinH = Math.sin(this.heading);
+    const cabX = this.x - 2 * cosH;
+    const cabY = this.y - 2 * sinH;
+    const cabZ = this.h + 2.5;
+    drawBox3D(cabX, cabY, cabZ, this.len * 0.55, this.w * 0.85, 5, this.heading, '#1e293b');
+
+    const frontX = this.x + (this.len / 2 + 0.5) * cosH;
+    const frontY = this.y + (this.len / 2 + 0.5) * sinH;
+    const backX  = this.x - (this.len / 2 + 0.5) * cosH;
+    const backY  = this.y - (this.len / 2 + 0.5) * sinH;
+
+    const prF = project(frontX, frontY, 3.5);
+    ctx.fillStyle = '#fef08a';
+    ctx.beginPath(); ctx.arc(prF.u, prF.v, 1.8 * prF.scale, 0, Math.PI * 2); ctx.fill();
+
+    const prB = project(backX, backY, 3.5);
+    ctx.fillStyle = this.stopped ? '#ef4444' : '#7f1d1d';
+    if (this.stopped) {
+      ctx.shadowColor = '#ef4444'; ctx.shadowBlur = 8 * prB.scale;
+    }
+    ctx.beginPath(); ctx.arc(prB.u, prB.v, (this.stopped ? 2.5 : 1.5) * prB.scale, 0, Math.PI * 2); ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+}
+
+let vehicles = [];
+let simTime = 0;
+let spawnAcc = { NS: 0, SN: 0, EW: 0, WE: 0 };
+let lastT = performance.now();
+
+function updateAllVehicles(phase, spd) {
+  const nl = g('numLanes');
+  const dirs = ['NS', 'SN', 'EW', 'WE'];
+  const grp = { NS: [], SN: [], EW: [], WE: [] };
+  for (const d of dirs) {
+    grp[d] = [];
+    for (let l = 0; l < nl; l++) grp[d][l] = [];
+  }
+
+  for (const v of vehicles) {
+    if (v.lane >= nl) v.lane = nl - 1;
+    grp[v.dir][v.lane].push(v);
+  }
+
+  for (let l = 0; l < nl; l++) {
+    grp.NS[l].sort((a, b) => a.y - b.y);
+    grp.SN[l].sort((a, b) => b.y - a.y);
+    grp.EW[l].sort((a, b) => a.x - b.x);
+    grp.WE[l].sort((a, b) => b.x - a.x);
+  }
+
+  for (const d of dirs) {
+    for (let l = 0; l < nl; l++) {
+      const arr = grp[d][l];
+      for (let i = 0; i < arr.length; i++) {
+        arr[i].update(phase, i > 0 ? arr[i - 1] : null, spd);
+      }
+    }
+  }
+
+  vehicles = vehicles.filter(v => !v.dead);
+  if (vehicles.length > 800) vehicles.splice(0, vehicles.length - 800);
+}
+
+function chooseBestLane(dir, nl) {
+  const counts = new Array(nl).fill(0);
+  for (const v of vehicles) {
+    if (v.dir === dir && !v.passed) {
+      const l = Math.min(v.lane, nl - 1);
+      counts[l] += (v.stopped ? 2 : 1);
+    }
+  }
+  let best = 0, minC = counts[0];
+  for (let i = 1; i < nl; i++) {
+    if (counts[i] < minC) { minC = counts[i]; best = i; }
+  }
+  return best;
+}
+
+function spawnVehicles(dt) {
+  const dirs = ['NS', 'SN', 'EW', 'WE'], ids = ['volNS', 'volSN', 'volEW', 'volWE'];
+  const nl = g('numLanes');
+  for (let i = 0; i < 4; i++) {
+    const vol = g(ids[i]);
+    const intv = 3600 / vol;
+    spawnAcc[dirs[i]] += dt;
+    while (spawnAcc[dirs[i]] >= intv) {
+      spawnAcc[dirs[i]] -= intv;
+      const lane = chooseBestLane(dirs[i], nl);
+      vehicles.push(new Vehicle3D(dirs[i], lane));
+    }
+  }
+}
+
+function queueCounts() {
+  const c = { NS: 0, SN: 0, EW: 0, WE: 0 };
+  for (const v of vehicles) if (v.stopped && !v.passed) c[v.dir]++;
+  return c;
+}
+
+/* ===========================================================
+   3D ENVIRONMENT & INFRASTRUCTURE
+   =========================================================== */
+function draw3DEnvironment() {
+  const nl = g('numLanes');
+  const rh = getRH();
+  const L = 300;
+
+  // Turf Plane
+  drawPoly3D([
+    {x:-L, y:-L, z:-1}, {x: L, y:-L, z:-1},
+    {x: L, y: L, z:-1}, {x:-L, y: L, z:-1}
+  ], COL.grass);
+
+  // Sidewalk Curbs
+  const swH = 2.5, swW = 14, cR = rh + swW;
+  drawBox3D(-(L + cR)/2, -(L + cR)/2, swH/2, L - cR, L - cR, swH, 0, COL.sidewalk);
+  drawBox3D( (L + cR)/2, -(L + cR)/2, swH/2, L - cR, L - cR, swH, 0, COL.sidewalk);
+  drawBox3D( (L + cR)/2,  (L + cR)/2, swH/2, L - cR, L - cR, swH, 0, COL.sidewalk);
+  drawBox3D(-(L + cR)/2,  (L + cR)/2, swH/2, L - cR, L - cR, swH, 0, COL.sidewalk);
+
+  // Roads
+  drawPoly3D([{x:-rh, y:-L, z:0}, {x:rh, y:-L, z:0}, {x:rh, y:L, z:0}, {x:-rh, y:L, z:0}], COL.road);
+  drawPoly3D([{x:-L, y:-rh, z:0}, {x:L, y:-rh, z:0}, {x:L, y:rh, z:0}, {x:-L, y:rh, z:0}], COL.road);
+  drawPoly3D([{x:-rh, y:-rh, z:0.1}, {x:rh, y:-rh, z:0.1}, {x:rh, y:rh, z:0.1}, {x:-rh, y:rh, z:0.1}], '#1a1d20');
+
+  drawZebraStripes(rh);
+  drawLaneMarkings(rh, nl, L);
+  drawStopLines(rh);
+  drawGroundCardinals(rh, L);
+}
+
+function drawZebraStripes(rh) {
+  const z = 0.3, swW = 10;
+  for (let x = -rh + 3; x < rh - 3; x += 6) {
+    drawPoly3D([{x, y:rh+2, z}, {x:x+3.5, y:rh+2, z}, {x:x+3.5, y:rh+swW, z}, {x, y:rh+swW, z}], 'rgba(255,255,255,0.65)');
+    drawPoly3D([{x, y:-rh-swW, z}, {x:x+3.5, y:-rh-swW, z}, {x:x+3.5, y:-rh-2, z}, {x, y:-rh-2, z}], 'rgba(255,255,255,0.65)');
+  }
+  for (let y = -rh + 3; y < rh - 3; y += 6) {
+    drawPoly3D([{x:rh+2, y, z}, {x:rh+swW, y, z}, {x:rh+swW, y:y+3.5, z}, {x:rh+2, y:y+3.5, z}], 'rgba(255,255,255,0.65)');
+    drawPoly3D([{x:-rh-swW, y, z}, {x:-rh-2, y, z}, {x:-rh-2, y:y+3.5, z}, {x:-rh-swW, y:y+3.5, z}], 'rgba(255,255,255,0.65)');
+  }
+}
+
+function drawLaneMarkings(rh, nl, L) {
+  const z = 0.35;
+  for (let y = rh + 12; y < L - 10; y += 14) {
+    drawPoly3D([{x:-0.8, y, z}, {x:0.8, y, z}, {x:0.8, y:y+8, z}, {x:-0.8, y:y+8, z}], COL.roadMark);
+    drawPoly3D([{x:-0.8, y:-y-8, z}, {x:0.8, y:-y-8, z}, {x:0.8, y:-y, z}, {x:-0.8, y:-y, z}], COL.roadMark);
+  }
+  for (let x = rh + 12; x < L - 10; x += 14) {
+    drawPoly3D([{x, y:-0.8, z}, {x:x+8, y:-0.8, z}, {x:x+8, y:0.8, z}, {x, y:0.8, z}], COL.roadMark);
+    drawPoly3D([{x:-x-8, y:-0.8, z}, {x:-x, y:-0.8, z}, {x:-x, y:0.8, z}, {x:-x-8, y:0.8, z}], COL.roadMark);
+  }
+
+  if (nl > 1) {
+    for (let l = 1; l < nl; l++) {
+      const xNS = -rh + l * LANE_W, xSN = l * LANE_W;
+      for (let y = rh + 12; y < L - 10; y += 12) {
+        drawPoly3D([{x:xNS-0.6,y,z},{x:xNS+0.6,y,z},{x:xNS+0.6,y:y+6,z},{x:xNS-0.6,y:y+6,z}], COL.laneDash);
+        drawPoly3D([{x:xSN-0.6,y:-y-6,z},{x:xSN+0.6,y:-y-6,z},{x:xSN+0.6,y:-y,z},{x:xSN-0.6,y:-y,z}], COL.laneDash);
+      }
+      const yEW = l * LANE_W, yWE = -rh + l * LANE_W;
+      for (let x = rh + 12; x < L - 10; x += 12) {
+        drawPoly3D([{x,y:yEW-0.6,z},{x:x+6,y:yEW-0.6,z},{x:x+6,y:yEW+0.6,z},{x,y:yEW+0.6,z}], COL.laneDash);
+        drawPoly3D([{x:-x-6,y:yWE-0.6,z},{x:-x,y:yWE-0.6,z},{x:-x,y:yWE+0.6,z},{x:-x-6,y:yWE+0.6,z}], COL.laneDash);
+      }
+    }
+  }
+}
+
+function drawStopLines(rh) {
+  const z = 0.4, slY = rh + SL_OFF, slX = rh + SL_OFF;
+  drawPoly3D([{x:-rh, y:slY, z}, {x:0, y:slY, z}, {x:0, y:slY+2.5, z}, {x:-rh, y:slY+2.5, z}], COL.stopBar);
+  drawPoly3D([{x:0, y:-slY-2.5, z}, {x:rh, y:-slY-2.5, z}, {x:rh, y:-slY, z}, {x:0, y:-slY, z}], COL.stopBar);
+  drawPoly3D([{x:slX, y:0, z}, {x:slX+2.5, y:0, z}, {x:slX+2.5, y:rh, z}, {x:slX, y:rh, z}], COL.stopBar);
+  drawPoly3D([{x:-slX-2.5, y:-rh, z}, {x:-slX, y:-rh, z}, {x:-slX, y:0, z}, {x:-slX-2.5, y:0, z}], COL.stopBar);
+}
+
+function drawGroundCardinals(rh, L) {
+  const letters = [
+    { text:'NORTE (N)', x: -rh/2, y: L - 25 },
+    { text:'SUR (S)',   x:  rh/2, y: -L + 25 },
+    { text:'ESTE (E)',  x:  L - 35, y:  rh/2 },
+    { text:'OESTE (O)', x: -L + 35, y: -rh/2 }
+  ];
+  ctx.save();
+  ctx.fillStyle = 'rgba(255,255,255,0.4)';
+  letters.forEach(item => {
+    const pr = project(item.x, item.y, 0.5);
+    ctx.font = `bold ${Math.round(11 * pr.scale)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(item.text, pr.u, pr.v);
+  });
+  ctx.restore();
+}
+
+// 3D Buildings
+const BUILDINGS = [
+  { x:-170, y:-170, w:110, h:110, zH:75, col:'#334155' },
+  { x: 170, y:-170, w:120, h:100, zH:95, col:'#1e293b' },
+  { x: 170, y: 170, w:100, h:110, zH:65, col:'#475569' },
+  { x:-170, y: 170, w:115, h:105, zH:85, col:'#0f172a' }
+];
+
+function draw3DBuildings() {
+  BUILDINGS.forEach(b => drawBox3D(b.x, b.y, b.zH / 2 + 2, b.w, b.h, b.zH, 0, b.col));
+}
+
+// 3D Traffic Signals
+function draw3DTrafficSignals(phase) {
+  const rh = getRH();
+  const mastH = 34;
+  const nsColor = phase === 'gNS' ? COL.sigG : phase === 'aNS' ? COL.sigA : COL.sigR;
+  const ewColor = phase === 'gEW' ? COL.sigG : phase === 'aEW' ? COL.sigA : COL.sigR;
+
+  const posts = [
+    { x:-rh - 5, y: rh + 5, actCol: nsColor, targetDir:'NS' },
+    { x: rh + 5, y:-rh - 5, actCol: nsColor, targetDir:'SN' },
+    { x: rh + 5, y: rh + 5, actCol: ewColor, targetDir:'EW' },
+    { x:-rh - 5, y:-rh - 5, actCol: ewColor, targetDir:'WE' }
+  ];
+
+  posts.forEach(p => {
+    drawBox3D(p.x, p.y, mastH / 2, 2.2, 2.2, mastH, 0, '#334155');
+
+    const armLen = rh * 0.7 + 6;
+    let armX = p.x, armY = p.y, armHead = 0;
+    if (p.targetDir === 'NS') { armX += armLen / 2; armHead = 0; }
+    else if (p.targetDir === 'SN') { armX -= armLen / 2; armHead = 0; }
+    else if (p.targetDir === 'EW') { armY -= armLen / 2; armHead = Math.PI/2; }
+    else if (p.targetDir === 'WE') { armY += armLen / 2; armHead = Math.PI/2; }
+
+    drawBox3D(armX, armY, mastH, (armHead === 0 ? armLen : 2), (armHead === 0 ? 2 : armLen), 2, 0, '#475569');
+
+    const sigX = armHead === 0 ? (p.targetDir === 'NS' ? p.x + armLen : p.x - armLen) : p.x;
+    const sigY = armHead !== 0 ? (p.targetDir === 'EW' ? p.y - armLen : p.y + armLen) : p.y;
+    const sigZ = mastH - 5;
+
+    drawBox3D(sigX, sigY, sigZ, 4, 4, 11, armHead, '#0f172a');
+
+    const prLens = project(sigX, sigY, sigZ);
+    ctx.fillStyle = p.actCol;
+    ctx.shadowColor = p.actCol;
+    ctx.shadowBlur = 12 * prLens.scale;
+    ctx.beginPath();
+    ctx.arc(prLens.u, prLens.v, 3.5 * prLens.scale, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  });
+}
+
+/* ===========================================================
+   CLEAN 2D CANVAS OVERLAYS
+   =========================================================== */
+function drawCanvasOverlay(phase, rem, label) {
+  ctx.save();
+  // Top-left compact phase pill
+  roundRect(ctx, 12, 12, 195, 34, 17);
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  const bulbColor = (phase === 'gNS' || phase === 'gEW') ? '#22c55e' : (phase === 'aNS' || phase === 'aEW') ? '#eab308' : '#ef4444';
+  
+  ctx.fillStyle = bulbColor;
+  ctx.shadowColor = bulbColor;
+  ctx.shadowBlur = 8;
+  ctx.beginPath();
+  ctx.arc(28, 29, 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 11px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, 42, 29);
+
+  ctx.font = 'bold 13px monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(Math.ceil(rem) + 's', 195, 29);
+
+  // Bottom-right 3D Compass
+  const cx = W - 28, cy = H - 28;
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.65)';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 18, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  ctx.stroke();
+
+  const nX = cx + Math.sin(camTheta) * 11;
+  const nY = cy - Math.cos(camTheta) * 11;
+  ctx.strokeStyle = '#ef4444';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(cx, cy);
+  ctx.lineTo(nX, nY);
+  ctx.stroke();
+
+  ctx.fillStyle = '#ef4444';
+  ctx.font = 'bold 9px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('N', nX, nY - 5);
+
+  ctx.restore();
+}
+
+/* ===========================================================
+   DOM TELEMETRY UPDATES
+   =========================================================== */
+function updateDOMTelemetry(phase, qc) {
+  const { rem, label, bulb } = phaseRemaining();
+  const c = g('cycleTime');
+  const tCycle = ((simTime % c) + c) % c;
+
+  // 1. Top HUD
+  document.getElementById('hudPhaseName').textContent = label;
+  document.getElementById('hudPhaseTimer').textContent = `${Math.ceil(rem)}s`;
+  const bulbEl = document.getElementById('hudPhaseBulb');
+  bulbEl.textContent = bulb;
+  if (phase === 'gNS' || phase === 'gEW') bulbEl.className = 'w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg text-white shadow-md bg-green-500 flex-shrink-0';
+  else if (phase === 'aNS' || phase === 'aEW') bulbEl.className = 'w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg text-white shadow-md bg-yellow-500 flex-shrink-0';
+  else bulbEl.className = 'w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg text-white shadow-md bg-red-600 flex-shrink-0';
+
+  // 2. Cycle Progress
+  const pct = Math.min(100, Math.max(0, (tCycle / c) * 100));
+  document.getElementById('hudCycleElapsedText').textContent = `t = ${Math.floor(tCycle)}s / ${c}s`;
+  document.getElementById('hudCyclePercentText').textContent = `${Math.round(pct)}%`;
+  document.getElementById('hudCycleProgressBar').style.width = `${pct}%`;
+
+  // 3. Four Approach Cards
+  const appConfigs = [
+    { key:'N→S', dir:'NS', name:'Norte → Sur', arrow:'↓', isNS:true },
+    { key:'S→N', dir:'SN', name:'Sur → Norte', arrow:'↑', isNS:true },
+    { key:'E→O', dir:'EW', name:'Este → Oeste', arrow:'←', isNS:false },
+    { key:'O→E', dir:'WE', name:'Oeste → Este', arrow:'→', isNS:false }
+  ];
+
+  const container = document.getElementById('approachHUDCards');
+  let html = '';
+
+  appConfigs.forEach(ac => {
+    const data = losData[ac.key] || { delay:0, los:'A', vc:0, cap:0 };
+    const queue = qc[ac.dir] || 0;
+    
+    let sigBulb = '🔴';
+    let sigBg = 'bg-red-500/10 text-red-500 border-red-500/20';
+    let sigText = 'Rojo';
+
+    if (ac.isNS) {
+      if (phase === 'gNS') { sigBulb = '🟢'; sigBg = 'bg-green-500/10 text-green-500 border-green-500/20'; sigText = 'Verde'; }
+      else if (phase === 'aNS') { sigBulb = '🟡'; sigBg = 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20'; sigText = 'Ámbar'; }
+    } else {
+      if (phase === 'gEW') { sigBulb = '🟢'; sigBg = 'bg-green-500/10 text-green-500 border-green-500/20'; sigText = 'Verde'; }
+      else if (phase === 'aEW') { sigBulb = '🟡'; sigBg = 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20'; sigText = 'Ámbar'; }
+    }
+
+    html += `
+      <div class="bg-[var(--card)] border border-[var(--border)] rounded-xl p-2.5 shadow-sm flex flex-col justify-between">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-1 font-bold text-xs truncate">
+            <span>${ac.arrow}</span>
+            <span>${ac.name}</span>
+          </div>
+          <span class="text-[10px] font-semibold px-1.5 py-0.5 rounded border ${sigBg} flex items-center gap-1 flex-shrink-0">
+            <span>${sigBulb}</span> ${sigText}
+          </span>
+        </div>
+
+        <div class="flex items-center justify-between mt-2 pt-2 border-t border-[var(--border)]">
+          <div>
+            <div class="text-[11px] font-mono text-[var(--muted-foreground)]">d = <b class="text-[var(--foreground)]">${data.delay.toFixed(1)}s</b></div>
+            <div class="text-[10px] font-mono text-[var(--muted-foreground)]">v/c = ${data.vc.toFixed(2)}</div>
+            <div class="text-[10px] text-[var(--muted-foreground)] mt-0.5">Cola: <b class="text-[var(--foreground)]">${queue} veh</b></div>
+          </div>
+          <div class="los-badge los-${data.los} flex-shrink-0" style="min-width:32px;height:32px;font-size:16px;">
+            ${data.los}
+          </div>
+        </div>
+      </div>
+    `;
+  });
+
+  container.innerHTML = html;
+}
+
+function roundRect(c, x, y, w, h, r) {
+  c.beginPath();
+  c.moveTo(x + r, y); c.lineTo(x + w - r, y);
+  c.quadraticCurveTo(x + w, y, x + w, y + r); c.lineTo(x + w, y + h - r);
+  c.quadraticCurveTo(x + w, y + h, x + w - r, y + h); c.lineTo(x + r, y + h);
+  c.quadraticCurveTo(x, y + h, x, y + h - r); c.lineTo(x, y + r);
+  c.quadraticCurveTo(x, y, x + r, y);
+  c.closePath();
+}
+
+/* ===========================================================
+   MAIN ANIMATION LOOP
+   =========================================================== */
+function frame(now) {
+  const raw = (now - lastT) / 1000;
+  lastT = now;
+  const dt = Math.min(raw, 0.1);
+  const spd = g('simSpeed');
+  const simDt = dt * spd;
+  simTime += simDt;
+
+  const ph = sigPhase();
+
+  // 1. Spawning & Vehicle Physics
+  spawnVehicles(simDt);
+  updateAllVehicles(ph, spd);
+  const qc = queueCounts();
+
+  // 2. Clear Canvas
+  ctx.clearRect(0, 0, W, H);
+
+  // 3. Draw 3D Ground & Roads
+  draw3DEnvironment();
+
+  // 4. Depth Sort Vehicles
+  vehicles.forEach(v => {
+    v.d = project(v.x, v.y, v.h / 2).depth;
+  });
+  const sortedVehicles = [...vehicles].sort((a, b) => b.d - a.d);
+
+  // 5. Draw 3D Static Buildings
+  draw3DBuildings();
+
+  // 6. Draw 3D Vehicles
+  sortedVehicles.forEach(v => v.draw3D());
+
+  // 7. Draw 3D Traffic Signal Posts
+  draw3DTrafficSignals(ph);
+
+  // 8. Clean 2D Screen Overlays
+  const { rem, label } = phaseRemaining();
+  drawCanvasOverlay(ph, rem, label);
+
+  // 9. Update Clean External Telemetry HUD
+  updateDOMTelemetry(ph, qc);
+
+  document.getElementById('simClock').textContent = `t = ${Math.floor(simTime)}s`;
+  document.getElementById('vehCount').textContent = `${vehicles.length} veh`;
+
+  requestAnimationFrame(frame);
+}
+
+// Initial Launch
+updateCycleTimeDisplay();
+computeLOS();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
